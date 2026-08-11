@@ -1,0 +1,37 @@
+# Every watch is: where to look, what part to look at, what to ignore.
+#
+#   python -m pagewatch --config watches/example.yaml
+#   python -m pagewatch --config watches/example.yaml --loop 600
+
+notify:
+  console: true
+  # webhook: https://hooks.slack.com/services/...   # Slack, Discord, n8n, Make
+  # telegram:
+  #   token: "123456:ABC..."
+  #   chat_id: "987654321"
+
+watches:
+  # Price and stock. The selector is the whole point: watch the price element,
+  # not the page, or every ad rotation becomes an alert.
+  - name: widget-price
+    url: https://example.com/products/widget
+    selector: ".product-price, .stock-status"
+
+  # A page with its own volatile content the built-in filters won't know about.
+  - name: order-status
+    url: https://example.com/orders
+    selector: "#order-table"
+    ignore:
+      - 'Order #\d+'          # order numbers churn constantly
+      - 'ETA \d+ min'
+
+  # A job board. Watching the list container catches new postings.
+  - name: careers
+    url: https://example.com/careers
+    selector: "ul.job-list"
+    alert_on_block_after: 5   # this one rate-limits often; be slower to complain
+
+  # A small status page — the default length floor would flag it as a stub.
+  - name: status
+    url: https://example.com/status.json
+    min_body: 20
