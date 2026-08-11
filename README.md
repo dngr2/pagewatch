@@ -140,6 +140,26 @@ is filtered but real changes survive it, that a block page is never reported as
 a change, that sustained blocking *does* eventually alert, that a blocked fetch
 doesn't overwrite the baseline, and that one broken watch doesn't stop the rest.
 
+## Docker
+
+```bash
+docker build -t pagewatch . && docker run --rm pagewatch --demo
+```
+
+Runs as a non-root user, with state on a `/data` volume so a restart does not
+lose every baseline and re-alert on everything.
+
+```bash
+docker run --rm -v $PWD/watches:/app/watches -v pagewatch-state:/data \
+  pagewatch --config watches/live.yaml --state /data/state.json --loop 600
+```
+
+## CI
+
+Every push runs the test suite on Python 3.10, 3.11 and 3.12, builds the Docker
+image, and **runs the demo in the container** — a broken demo is a broken first
+impression, so it fails the build.
+
 ## Related
 
 - [stealth-scrape](https://github.com/dngr2/stealth-scrape) — the scraping
