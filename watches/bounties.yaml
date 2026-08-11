@@ -1,0 +1,48 @@
+# Watch the two orgs that demonstrably pay their bounties.
+#
+# Both currently have empty queues — they post in batches, contributors clear
+# them, and the queue sits empty until the next batch. The whole point is to
+# catch the batch on day one, while the comment count is still zero.
+#
+#   python -m pagewatch -c watches/bounties.yaml --state bounty-state.json --loop 900
+#
+# These watch the GitHub search API rather than the HTML pages: the JSON is
+# small, stable, and contains exactly the field that matters (total_count).
+# An HTML page would churn on every unrelated UI change.
+
+notify:
+  console: true
+  # telegram:
+  #   token: "123456:ABC..."
+  #   chat_id: "987654321"
+  # webhook: https://hooks.slack.com/services/...
+
+watches:
+  # 58 of 60 bounties paid, median $75, max $4,000
+  - name: archestra-bounties
+    url: https://api.github.com/search/issues?q=is:issue+is:open+repo:archestra-ai/archestra+label:bounty&per_page=1
+    min_body: 20
+    ignore:
+      - '"score":[\d.]+'        # relevance score jitters between identical results
+      - '"updated_at":"[^"]+"'
+      - '"node_id":"[^"]+"'
+
+  # 26 of 27 paid, consistent $100, on nuclei-templates / subfinder / httpx
+  - name: projectdiscovery-bounties
+    url: https://api.github.com/search/issues?q=is:issue+is:open+org:projectdiscovery+label:bounty&per_page=1
+    min_body: 20
+    ignore:
+      - '"score":[\d.]+'
+      - '"updated_at":"[^"]+"'
+      - '"node_id":"[^"]+"'
+
+  # Wider net: any newly-labelled bounty on a repo that isn't a known aggregator.
+  # Noisier, so treat it as a lead rather than an alert worth acting on blind.
+  - name: new-diamond-bounties
+    url: https://api.github.com/search/issues?q=is:issue+is:open+label:%22%F0%9F%92%8E+Bounty%22&sort=created&order=desc&per_page=3
+    min_body: 20
+    ignore:
+      - '"score":[\d.]+'
+      - '"updated_at":"[^"]+"'
+      - '"node_id":"[^"]+"'
+      - '"comments":\d+'         # comment counts tick constantly; only new issues matter
