@@ -2,13 +2,15 @@
 
 Watch a web page. Get alerted **only when the thing you care about actually changes**.
 
+![pagewatch demo](docs/demo.gif)
+
 ```bash
 pip install -r requirements.txt
 python -m pagewatch --demo
 ```
 
-No config, no network, no signup. The demo shows the two behaviours that make
-this harder than `diff`.
+No config, no network, no signup. That recording is the real output — the
+demo above runs on your machine in about eight seconds.
 
 ## Why this isn't just diffing a page
 
