@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -36,7 +37,12 @@ def demo() -> int:
     """
     root = Path(__file__).resolve().parent.parent
     fixtures = root / "fixtures"
-    state = root / ".demo-state.json"
+
+    # State goes to a temp dir, never the install directory. In a container the
+    # app dir is owned by root while the process runs unprivileged, so writing
+    # here fails outright — and even where it works, scribbling runtime state
+    # into the code directory is the wrong place for it.
+    state = Path(tempfile.gettempdir()) / "pagewatch-demo-state.json"
     state.unlink(missing_ok=True)
 
     store = Store.load(state)
