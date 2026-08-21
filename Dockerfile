@@ -1,6 +1,6 @@
 # Single command on a clean machine:
 #   docker build -t pagewatch . && docker run --rm pagewatch --demo
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 # Dependencies first, so a code change doesn't invalidate the pip layer.
 WORKDIR /app
