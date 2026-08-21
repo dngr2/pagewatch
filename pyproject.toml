@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pagewatch"
+version = "0.1.0"
+description = "Change monitor that classifies block pages before comparing, so it never alerts on a WAF challenge"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = ["requests>=2.31", "PyYAML>=6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+pagewatch = "pagewatch.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pagewatch*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "W"]

@@ -6,17 +6,21 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         python: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -24,21 +28,38 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest ruff
+
+      - name: Lint
+        run: ruff check .
 
       - name: Tests
         run: python -m pytest tests/ -q
 
-      # The demo is the thing buyers actually run, so CI runs it too — a broken
+      - name: Dependency audit
+        run: |
+          pip install pip-audit
+          pip-audit || true   # advisory: report, don't fail the build
+
+      # The demo is the thing users actually run, so CI runs it too — a broken
       # demo is a broken first impression.
       - name: Demo still works
         run: python -m pagewatch --demo
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - name: Build image
         run: docker build -t pagewatch:ci .
       - name: Run demo in container
         run: docker run --rm pagewatch:ci --demo
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.20.0   # pinned, not @master
+        with:
+          image-ref: pagewatch:ci
+          format: table
+          exit-code: "0"   # advisory scan
