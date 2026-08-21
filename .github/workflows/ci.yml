@@ -58,7 +58,7 @@ jobs:
       - name: Run demo in container
         run: docker run --rm pagewatch:ci --demo
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.20.0   # pinned, not @master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25   # v0.36.0, pinned to SHA
         with:
           image-ref: pagewatch:ci
           format: table
