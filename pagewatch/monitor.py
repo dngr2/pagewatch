@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,9 +51,22 @@ def load_config(path: str | Path) -> dict:
 
 
 def check(w: Watch, store: Store, channels: list[notify.Channel] | None = None) -> Result:
-    """Run one watch and alert if it warrants one."""
+    """Run one watch and alert if it warrants one (fetch + process)."""
     channels = channels or []
-    resp = fetch(w.url, min_body=w.min_body)
+    prev0 = store.get(w.name)
+    resp = fetch(w.url, min_body=w.min_body, etag=prev0.etag, last_modified=prev0.last_modified)
+    return _process(w, resp, store, channels)
+
+
+def _process(w: Watch, resp, store: Store, channels: list[notify.Channel]) -> Result:
+    """Post-fetch handling: classify, compare, persist, alert. Touches the Store,
+    so callers must run this serially (the Store is not thread-safe)."""
+    if resp.not_modified:
+        # server confirmed nothing changed (304) — cheap, no body to compare
+        prev = store.get(w.name)
+        store.record(w.name, prev.digest, prev.text, changed=False,
+                     etag=resp.etag, last_modified=resp.last_modified)
+        return Result(w.name, "unchanged", "", prev.digest)
 
     if not resp.ok and resp.error:
         log.error("fetch failed", extra={"watch": w.name, "error": resp.error})
@@ -99,13 +113,41 @@ def check(w: Watch, store: Store, channels: list[notify.Channel] | None = None) 
 
 
 def run(config: dict, store: Store,
-        channels: list[notify.Channel] | None = None) -> list[Result]:
+        channels: list[notify.Channel] | None = None,
+        max_workers: int = 8) -> list[Result]:
+    """Run all watches. Fetches run concurrently (the slow, I/O-bound part), then
+    results are processed serially so the non-thread-safe Store and alert delivery
+    stay single-threaded. Total wall time collapses from the sum of the fetch
+    latencies to roughly the slowest single fetch."""
     channels = channels if channels is not None else notify.build(config)
-    results = []
-    for raw in config.get("watches", []):
-        w = Watch.from_dict(raw)
+    watches = [Watch.from_dict(raw) for raw in config.get("watches", [])]
+    if not watches:
+        store.save()
+        return []
+
+    # Snapshot prior validators SERIALLY before fanning out (Store is not thread-safe).
+    prior = {w.name: (store.get(w.name).etag, store.get(w.name).last_modified) for w in watches}
+
+    def _do_fetch(w: Watch):
+        et, lm = prior[w.name]
         try:
-            results.append(check(w, store, channels))
+            return w, fetch(w.url, min_body=w.min_body, etag=et, last_modified=lm), None
+        except Exception as exc:                    # noqa: BLE001
+            return w, None, exc
+
+    workers = max(1, min(max_workers, len(watches)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        fetched = list(pool.map(_do_fetch, watches))
+
+    # Process serially: extract/compare/persist/alert all touch shared state.
+    results = []
+    for w, resp, exc in fetched:
+        if exc is not None:
+            log.exception("fetch raised", extra={"watch": w.name})
+            results.append(Result(w.name, "error", str(exc)))
+            continue
+        try:
+            results.append(_process(w, resp, store, channels))
         except Exception as exc:                    # noqa: BLE001
             # One broken watch must never stop the others.
             log.exception("watch raised", extra={"watch": w.name})

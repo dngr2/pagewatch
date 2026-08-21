@@ -23,6 +23,8 @@ class Seen:
     checks: int = 0
     changes: int = 0
     blocked_streak: int = 0
+    etag: str = ""              # HTTP validators for conditional requests
+    last_modified: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -44,7 +46,9 @@ class Store:
             # A corrupt state file must not stop monitoring; worst case is one
             # "first observation" alert per watch.
             return cls(path=p)
-        return cls(path=p, data={k: Seen(**v) for k, v in raw.items()})
+        fields = set(Seen().to_dict())
+        # tolerate state written by a different version: ignore unknown keys
+        return cls(path=p, data={k: Seen(**{kk: vv for kk, vv in v.items() if kk in fields}) for k, v in raw.items()})
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +60,8 @@ class Store:
     def get(self, name: str) -> Seen:
         return self.data.setdefault(name, Seen())
 
-    def record(self, name: str, digest: str, text: str, changed: bool) -> Seen:
+    def record(self, name: str, digest: str, text: str, changed: bool,
+               etag: str | None = None, last_modified: str | None = None) -> Seen:
         s = self.get(name)
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         s.checks += 1
@@ -67,6 +72,10 @@ class Store:
             s.changed_at = now
         s.digest = digest
         s.text = text[:4000]        # enough to diff against, not enough to bloat
+        if etag is not None:
+            s.etag = etag
+        if last_modified is not None:
+            s.last_modified = last_modified
         return s
 
     def record_block(self, name: str) -> int:

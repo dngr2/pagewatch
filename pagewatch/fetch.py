@@ -44,6 +44,9 @@ class Response:
     blocked: str = ""        # marker name, empty when clean
     error: str = ""
     elapsed: float = 0.0
+    not_modified: bool = False   # server answered 304 to a conditional request
+    etag: str = ""               # validators to send back next time
+    last_modified: str = ""
 
     @property
     def usable(self) -> bool:
@@ -64,8 +67,15 @@ def classify(html: str, min_body: int = MIN_BODY) -> str:
 
 
 def fetch(url: str, timeout: float = 25.0, session=None,
-          min_body: int = MIN_BODY) -> Response:
-    """HTTP fetch. `file://` paths are supported so the demo runs offline."""
+          min_body: int = MIN_BODY, etag: str = "", last_modified: str = "") -> Response:
+    """HTTP fetch. `file://` paths are supported so the demo runs offline.
+
+    If `etag`/`last_modified` from a prior fetch are supplied, they are sent as
+    conditional headers (If-None-Match / If-Modified-Since). A 304 Not Modified
+    is returned cheaply as `not_modified=True` with no body — on rate-limited
+    hosts (e.g. the GitHub bounty queues) a 304 does not count against the limit,
+    so a poll that hasn't changed is nearly free.
+    """
     t0 = time.time()
 
     if url.startswith("file://"):
@@ -83,14 +93,26 @@ def fetch(url: str, timeout: float = 25.0, session=None,
     except ImportError:
         return Response(ok=False, error="requests not installed")
 
+    headers = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+
     s = session or requests.Session()
     try:
-        r = s.get(url, timeout=timeout, headers={
-            "User-Agent": UA,
-            "Accept-Language": "en-US,en;q=0.9",
-        })
+        r = s.get(url, timeout=timeout, headers=headers)
     except Exception as exc:                       # noqa: BLE001
         return Response(ok=False, error=f"{type(exc).__name__}: {exc}",
+                        elapsed=time.time() - t0)
+
+    new_etag = r.headers.get("ETag", "") or etag
+    new_lastmod = r.headers.get("Last-Modified", "") or last_modified
+
+    if r.status_code == 304:
+        # unchanged since last poll — nothing to classify or compare
+        return Response(ok=True, status=304, not_modified=True,
+                        etag=new_etag, last_modified=new_lastmod,
                         elapsed=time.time() - t0)
 
     blocked = classify(r.text, min_body)
@@ -102,4 +124,5 @@ def fetch(url: str, timeout: float = 25.0, session=None,
                     extra={"url": url, "kind": blocked, "status": r.status_code})
 
     return Response(ok=r.status_code < 400, html=r.text, status=r.status_code,
-                    blocked=blocked, elapsed=time.time() - t0)
+                    blocked=blocked, etag=new_etag, last_modified=new_lastmod,
+                    elapsed=time.time() - t0)
