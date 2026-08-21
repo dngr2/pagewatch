@@ -128,16 +128,30 @@ def run(config: dict, store: Store,
     # Snapshot prior validators SERIALLY before fanning out (Store is not thread-safe).
     prior = {w.name: (store.get(w.name).etag, store.get(w.name).last_modified) for w in watches}
 
-    def _do_fetch(w: Watch):
-        et, lm = prior[w.name]
-        try:
-            return w, fetch(w.url, min_body=w.min_body, etag=et, last_modified=lm), None
-        except Exception as exc:                    # noqa: BLE001
-            return w, None, exc
+    # Group by host so watches on the SAME site run serially (respecting that site's
+    # rate limit / politeness), while DIFFERENT hosts are probed in parallel — the
+    # latency win without hammering any single host.
+    from urllib.parse import urlsplit
+    groups: dict[str, list[Watch]] = {}
+    for w in watches:
+        host = (urlsplit(w.url).hostname or w.url).lower()
+        groups.setdefault(host, []).append(w)
 
-    workers = max(1, min(max_workers, len(watches)))
+    def _probe_group(group: list[Watch]):
+        out = []
+        for w in group:
+            et, lm = prior[w.name]
+            try:
+                out.append((w, fetch(w.url, min_body=w.min_body, etag=et, last_modified=lm), None))
+            except Exception as exc:                # noqa: BLE001
+                out.append((w, None, exc))
+        return out
+
+    workers = max(1, min(max_workers, len(groups)))
+    fetched = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        fetched = list(pool.map(_do_fetch, watches))
+        for group_result in pool.map(_probe_group, groups.values()):
+            fetched.extend(group_result)
 
     # Process serially: extract/compare/persist/alert all touch shared state.
     results = []

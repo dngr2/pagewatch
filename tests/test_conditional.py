@@ -71,3 +71,41 @@ def test_run_parallel_processes_all_watches(tmp_path):
     results = monitor.run(config, store, channels=[])
     assert len(results) == 3
     assert {r.status for r in results} == {"first"}
+
+
+def test_github_token_sent_only_to_exact_api_host(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secrettoken")
+    s = FakeSession(FakeResp(200, text="x" * 500))
+    fetch("https://api.github.com/repos/x/y/issues", session=s)
+    assert s.sent_headers.get("Authorization") == "Bearer secrettoken"
+
+
+def test_github_token_never_leaks_to_lookalike_host(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "secrettoken")
+    for url in ("https://api.github.com.evil.tld/x",
+                "https://evilapi.github.com.attacker.net/x",
+                "https://example.com/api.github.com/x"):
+        s = FakeSession(FakeResp(200, text="x" * 500))
+        fetch(url, session=s)
+        assert "Authorization" not in s.sent_headers, url
+
+
+def test_no_auth_header_without_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    s = FakeSession(FakeResp(200, text="x" * 500))
+    fetch("https://api.github.com/x", session=s)
+    assert "Authorization" not in s.sent_headers
+
+
+def test_run_serializes_same_host_parallelizes_across_hosts(tmp_path):
+    fx = Path(__file__).resolve().parent.parent / "fixtures" / "v1.html"
+    # two watches share a host label (file:// -> host '' ), one distinct — still all processed
+    config = {"watches": [
+        {"name": "a", "url": f"file://{fx}", "min_body": 1},
+        {"name": "b", "url": f"file://{fx}", "min_body": 1},
+        {"name": "c", "url": f"file://{fx}", "min_body": 1},
+    ]}
+    store = Store(path=tmp_path / "s.json")
+    results = monitor.run(config, store, channels=[])
+    assert len(results) == 3
+    assert {r.status for r in results} == {"first"}

@@ -10,12 +10,23 @@ So every response is classified before it is ever compared.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 log = logging.getLogger("pagewatch.fetch")
+
+
+def _host(url: str) -> str:
+    """Lowercased hostname of a URL, or '' if unparseable. Used for exact-host
+    checks (e.g. only authenticate to api.github.com), never substring matching."""
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return ""
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36")
@@ -71,10 +82,16 @@ def fetch(url: str, timeout: float = 25.0, session=None,
     """HTTP fetch. `file://` paths are supported so the demo runs offline.
 
     If `etag`/`last_modified` from a prior fetch are supplied, they are sent as
-    conditional headers (If-None-Match / If-Modified-Since). A 304 Not Modified
-    is returned cheaply as `not_modified=True` with no body — on rate-limited
-    hosts (e.g. the GitHub bounty queues) a 304 does not count against the limit,
-    so a poll that hasn't changed is nearly free.
+    conditional headers (If-None-Match / If-Modified-Since); a 304 Not Modified
+    is returned cheaply as `not_modified=True` with no body.
+
+    For api.github.com specifically, GitHub only exempts a 304 from the REST rate
+    limit when the request is *authenticated*, so if `GITHUB_TOKEN` is set in the
+    environment an `Authorization: Bearer` header is added — but ONLY when the
+    parsed hostname is exactly `api.github.com` (an exact match, never a substring,
+    so a lookalike like `api.github.com.evil.tld` can't capture the token).
+    Unauthenticated hosts still get the smaller-payload benefit of a 304, just not
+    the rate-limit exemption.
     """
     t0 = time.time()
 
@@ -98,6 +115,14 @@ def fetch(url: str, timeout: float = 25.0, session=None,
         headers["If-None-Match"] = etag
     if last_modified:
         headers["If-Modified-Since"] = last_modified
+
+    # Authenticate ONLY to the exact GitHub API host — a 304 is exempt from
+    # GitHub's REST rate limit only for authenticated requests. Exact-hostname
+    # match (never substring) so the token can never leak to a lookalike host.
+    token = os.environ.get("GITHUB_TOKEN")
+    if token and _host(url) == "api.github.com":
+        headers["Authorization"] = f"Bearer {token}"
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
 
     s = session or requests.Session()
     try:
